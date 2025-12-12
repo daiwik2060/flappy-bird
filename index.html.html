@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Flappy Bird - Day 4</title>
+<style>
+    :root{--bg:#70c5ce;--ground:#dea95f;--pipe:#2da36e;--bird:#ffdd57}
+    html,body{height:100%;margin:0;font-family:Arial,Helvetica,sans-serif;background:var(--bg)}
+    #gameWrap{display:flex;align-items:center;justify-content:center;height:100%}
+    canvas{background:linear-gradient(#9fe7f0,#66d0d9);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+    #hint{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;color:#fff;text-shadow:0 2px 4px rgba(0,0,0,.4)}
+</style>
+</head>
+<body>
+<div id="gameWrap">
+    <canvas id="game" width="480" height="640"></canvas>
+</div>
+<div id="hint">Tap / Click / Space to flap — Click after game over to restart</div>
+
+<script>
+(() => {
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+
+    // Game constants
+    const GRAVITY = 0.3;
+    const JUMP = -8.6;
+    const PIPE_GAP = 150;
+    const PIPE_W = 70;
+    const PIPE_SPEED = 2.4;
+    const SPAWN_INTERVAL = 1500; // ms
+    const GROUND_H = 80;
+
+    // State
+    let bird = { x: 100, y: H/2, vy: 0, radius: 14, rotation: 0 };
+    let pipes = [];
+    let lastSpawn = 0;
+    let lastTime = 0;
+    let score = 0;
+    let best = Number(localStorage.getItem('flappy_best')||0);
+    let running = true;
+    let gameOver = false;
+
+    function reset() {
+        bird = { x: 100, y: H/2, vy: 0, radius: 14, rotation: 0 };
+        pipes = [];
+        lastSpawn = performance.now();
+        lastTime = performance.now();
+        score = 0;
+        running = true;
+        gameOver = false;
+        loop(lastTime);
+    }
+
+    function spawnPipe() {
+        const minY = 60;
+        const maxY = H - GROUND_H - PIPE_GAP - 60;
+        const top = Math.floor(Math.random() * (maxY - minY + 1)) + minY;
+        pipes.push({ x: W + 10, top: top, passed: false });
+    }
+
+    function rectsCollide(rx, ry, rw, rh, cx, cy, cr) {
+        // approximate circle-rect collision
+        const nearestX = Math.max(rx, Math.min(cx, rx + rw));
+        const nearestY = Math.max(ry, Math.min(cy, ry + rh));
+        const dx = cx - nearestX;
+        const dy = cy - nearestY;
+        return (dx*dx + dy*dy) < (cr*cr);
+    }
+
+    function update(dt) {
+        if (!running) return;
+        // bird physics
+        bird.vy += GRAVITY;
+        bird.y += bird.vy * dt;
+        bird.rotation = Math.max(-Math.PI/6, Math.min(Math.PI/2, bird.vy / 12));
+
+        // ground collision
+        const groundY = H - GROUND_H;
+        if (bird.y + bird.radius > groundY) {
+            bird.y = groundY - bird.radius;
+            bird.vy = 0;
+            running = false;
+            gameOver = true;
+            if (score > best) { best = score; localStorage.setItem('flappy_best', best); }
+        }
+        if (bird.y - bird.radius < 0) {
+            bird.y = bird.radius;
+            bird.vy = 0;
+        }
+
+        // pipes movement
+        for (let p of pipes) {
+            p.x -= PIPE_SPEED * dt;
+            // score
+            if (!p.passed && p.x + PIPE_W < bird.x - bird.radius) {
+                p.passed = true;
+                score++;
+            }
+            // collision check with top and bottom pipes
+            if (rectsCollide(p.x, 0, PIPE_W, p.top, bird.x, bird.y, bird.radius) ||
+                    rectsCollide(p.x, p.top + PIPE_GAP, PIPE_W, H - p.top - PIPE_GAP - GROUND_H, bird.x, bird.y, bird.radius)) {
+                running = false;
+                gameOver = true;
+                if (score > best) { best = score; localStorage.setItem('flappy_best', best); }
+            }
+        }
+        // remove off-screen pipes
+        pipes = pipes.filter(p => p.x + PIPE_W > -50);
+    }
+
+    function draw() {
+        // clear
+        ctx.clearRect(0,0,W,H);
+
+        // background gradient already used by CSS but draw some simple sky clouds
+        ctx.fillStyle = 'rgba(255,255,255,0.06)';
+        for (let i=0;i<6;i++){
+            ctx.beginPath();
+            ctx.ellipse(80+i*120, 80 + ((i%2)*30), 60, 30, 0, 0, Math.PI*2);
+            ctx.fill();
+        }
+
+        // pipes
+        for (let p of pipes) {
+            ctx.fillStyle = 'rgb(45,163,110)';
+            // top
+            ctx.fillRect(p.x, 0, PIPE_W, p.top);
+            // bottom
+            ctx.fillRect(p.x, p.top + PIPE_GAP, PIPE_W, H - p.top - PIPE_GAP - GROUND_H);
+            // caps
+            ctx.fillStyle = '#1f7a58';
+            ctx.fillRect(p.x-6, p.top-12, PIPE_W+12, 12);
+            ctx.fillRect(p.x-6, p.top+PIPE_GAP, PIPE_W+12, 12);
+        }
+
+        // ground
+        ctx.fillStyle = '#dea95f';
+        ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
+        // ground pattern
+        ctx.fillStyle = 'rgba(0,0,0,0.06)';
+        for(let i=0;i<20;i++){
+            ctx.fillRect((i*40 + ((Date.now()/100)%40))%W, H-GROUND_H+48, 24, 8);
+        }
+
+        // bird
+        ctx.save();
+        ctx.translate(bird.x, bird.y);
+        ctx.rotate(bird.rotation);
+        // body
+        ctx.fillStyle = '#ffdd57';
+        ctx.beginPath();
+        ctx.ellipse(0,0,bird.radius*1.2,bird.radius,0,0,Math.PI*2);
+        ctx.fill();
+        // wing
+        ctx.fillStyle = '#f0c84d';
+        ctx.beginPath();
+        ctx.ellipse(-2,0,bird.radius*0.6,bird.radius*0.4, Math.PI/6,0,Math.PI*2);
+        ctx.fill();
+        // eye
+        ctx.fillStyle = '#222';
+        ctx.beginPath();
+        ctx.arc(6,-3,3,0,Math.PI*2);
+        ctx.fill();
+        // beak
+        ctx.fillStyle = '#ff9f2f';
+        ctx.beginPath();
+        ctx.moveTo(12,0);
+        ctx.lineTo(18,3);
+        ctx.lineTo(12,6);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        // score
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.font = 'bold 44px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(score, W/2+2, 72);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(score, W/2, 70);
+
+        if (gameOver) {
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(40, H/2 - 90, W-80, 160);
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 28px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Game Over', W/2, H/2 - 30);
+            ctx.font = '18px sans-serif';
+            ctx.fillText('Score: ' + score + '   Best: ' + best, W/2, H/2 + 0);
+            ctx.fillStyle = '#ddd';
+            ctx.font = '14px sans-serif';
+            ctx.fillText('Click or press Space to play again', W/2, H/2 + 44);
+        }
+    }
+
+    function loop(timestamp) {
+        if (!lastTime) lastTime = timestamp;
+        const dt = Math.min(32, timestamp - lastTime) / 16.67; // ~60fps scale
+        lastTime = timestamp;
+
+        // spawn pipes by wall clock
+        if (timestamp - lastSpawn > SPAWN_INTERVAL) {
+            spawnPipe();
+            lastSpawn = timestamp;
+        }
+
+        update(dt);
+        draw();
+
+        if (!gameOver) {
+            requestAnimationFrame(loop);
+        }
+    }
+
+    // Controls
+    function flap() {
+        if (gameOver) { reset(); return; }
+        bird.vy = JUMP;
+    }
+    window.addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); flap(); } });
+    canvas.addEventListener('mousedown', (e) => { flap(); });
+    canvas.addEventListener('touchstart', (e) => { e.preventDefault(); flap(); }, {passive:false});
+    // allow click anywhere to restart when game over
+    window.addEventListener('click', (e) => {
+        if (gameOver) reset();
+    });
+
+    // start
+    lastSpawn = performance.now();
+    lastTime = performance.now();
+    // initial two pipes
+    spawnPipe();
+    setTimeout(spawnPipe, 700);
+    loop(lastTime);
+})();
+</script>
+</body>
+</html>
